@@ -16,25 +16,27 @@ _client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 MAX_BYTES = 10 * 1024 * 1024  # 10MB
 VALID_MAGIC = (b"%PDF", b"PK\x03\x04")
 
-SYSTEM_PROMPT = """You are a Singapore PDPA compliance expert. Analyze document text for personal data.
+SYSTEM_PROMPT = """You are a Singapore PDPA compliance officer compiling a personal-data inventory from a document.
+
+Go through the document and compile every distinct piece of personal data — data that identifies a living individual, either on its own or combined with other data in the document.
 
 Return ONLY valid JSON — no prose, no markdown, no explanation:
 {
-  "risk_level": "HIGH" | "MEDIUM" | "LOW" | "NONE",
+  "summary": "<one sentence overview of what personal data the document contains>",
   "total_found": <integer>,
-  "summary": "<one sentence>",
-  "categories": [
-    {"type": "<data type>", "count": <integer>, "severity": "HIGH" | "MEDIUM" | "LOW", "description": "<brief>"}
-  ],
-  "recommendations": ["<string>"]
+  "items": [
+    {
+      "value": "<the personal data exactly as it appears in the document>",
+      "category": "<one of: NRIC/FIN, Passport, Name, Contact, Address, Financial, Medical, Employment, Biometric, Other>",
+      "note": "<short note on why this is personal data under the PDPA>"
+    }
+  ]
 }
 
-PDPA severity:
-- HIGH: NRIC/FIN, passport, bank account, medical records, biometric data
-- MEDIUM: Full name + contact details combined, salary information
-- LOW: Standalone emails, generic names, general demographics
-
-No personal data found → risk_level "NONE", total_found 0, empty categories array."""
+Rules:
+- Compile the actual values found (e.g. "S1234567A", "john@acme.com", "$6,500/month"), not just categories.
+- One entry per distinct value. Do not invent data that is not in the document.
+- No personal data found → total_found 0, empty items array."""
 
 
 def _valid_magic(data: bytes) -> bool:
@@ -42,13 +44,11 @@ def _valid_magic(data: bytes) -> bool:
 
 
 def _valid_schema(d: dict) -> bool:
-    if not {"risk_level", "total_found", "summary", "categories", "recommendations"}.issubset(d):
-        return False
-    if d["risk_level"] not in {"HIGH", "MEDIUM", "LOW", "NONE"}:
+    if not {"summary", "total_found", "items"}.issubset(d):
         return False
     if not isinstance(d["total_found"], int) or d["total_found"] < 0:
         return False
-    return isinstance(d["categories"], list) and isinstance(d["recommendations"], list)
+    return isinstance(d["items"], list)
 
 
 @app.route("/health", methods=["GET"])
@@ -96,7 +96,7 @@ def analyze():
             messages=[{
                 "role": "user",
                 "content": (
-                    "Analyze this document for personal data under Singapore PDPA.\n\n"
+                    "Compile a PDPA personal-data inventory from this document.\n\n"
                     "<document>\n"
                     f"{text[:48000]}\n"
                     "</document>\n\n"
