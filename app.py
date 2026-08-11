@@ -21,31 +21,40 @@ _client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 MAX_BYTES = 10 * 1024 * 1024  # 10MB
 VALID_MAGIC = (b"%PDF", b"PK\x03\x04")
 
-SYSTEM_PROMPT = """You are a Singapore PDPA compliance officer compiling a personal-data inventory from a document.
+SYSTEM_PROMPT = """You extract structured data from an invoice or business document into a clean inventory.
 
-Go through the document and compile every distinct piece of personal data or sensitive identifier. Include:
-- Anything identifying an individual on its own or combined with other data (names, NRIC/FIN, passport, etc.).
-- Contact details even when they belong to a company or a role rather than a named person (email addresses like billing@company.com, phone numbers, postal addresses).
-- Financial identifiers (bank account numbers, routing numbers, card numbers).
-Business/company data is in scope when it is contact or financial information of the kind above — do not skip a document just because no natural person is named.
+Go through the document and compile every distinct field. Assign each field to a party:
+- "Issuer" — the company issuing/sending the document (usually the sender at the top).
+- "Bill To" — the company or person being billed.
+- "—" — fields that belong to the document itself, not a party (invoice number, dates, line items, totals).
 
 Return ONLY valid JSON — no prose, no markdown, no explanation:
 {
-  "summary": "<one sentence overview of what personal data the document contains>",
+  "summary": "<one sentence overview of the document>",
   "total_found": <integer>,
   "items": [
     {
-      "value": "<the personal data exactly as it appears in the document>",
-      "category": "<one of: NRIC/FIN, Passport, Name, Contact, Address, Financial, Medical, Employment, Biometric, Other>",
-      "note": "<short note on why this is personal data under the PDPA>"
+      "party": "<Issuer | Bill To | —>",
+      "category": "<one of: Company Name, Email, Phone, Address, Payment Details, Invoice Info, Line Item, Total, Notes>",
+      "value": "<the value exactly as it appears>",
+      "note": "<short plain description of the field>"
     }
   ]
 }
 
+Category rules:
+- Company Name / Email / Phone / Address — one entry each, tagged Issuer or Bill To.
+- Invoice Info — invoice number, invoice date, due date, each a separate entry (party "—").
+- Payment Details — bank name, account number, routing number, each a separate entry.
+- Line Item — one entry per line: value is the description, note is "Qty {qty} × {unit price} = {amount}" (party "—").
+- Total — subtotal, tax, and grand total, each a separate entry; value is the amount, note says which total (party "—").
+- Notes — any free-text remark, payment terms, thank-you message, special instruction, or footnote not captured by another category; value is the note text (party "—"). Skip if the document has none.
+
 Rules:
-- Compile the actual values found (e.g. "S1234567A", "john@acme.com", "$6,500/month"), not just categories.
-- One entry per distinct value. Do not invent data that is not in the document.
-- No personal data found → total_found 0, empty items array."""
+- Compile the actual values found, exactly as written. Do not invent data.
+- Keep account and routing numbers, and any leading zeros, exactly as shown.
+- One entry per distinct value. Notes are plain and factual — no risk or compliance commentary.
+- Nothing found → total_found 0, empty items array."""
 
 
 def _valid_magic(data: bytes) -> bool:
@@ -105,7 +114,7 @@ def analyze():
             messages=[{
                 "role": "user",
                 "content": (
-                    "Compile a PDPA personal-data inventory from this document.\n\n"
+                    "Extract the structured data inventory from this document.\n\n"
                     "<document>\n"
                     f"{text[:48000]}\n"
                     "</document>\n\n"
