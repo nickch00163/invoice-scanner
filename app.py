@@ -1,4 +1,9 @@
 import os
+
+# docling's torch models try to JIT-compile via TorchDynamo, which needs MSVC
+# (cl.exe) on Windows. Force eager mode so no C++ compiler is required.
+os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
+
 import json
 import re
 import tempfile
