@@ -23,7 +23,11 @@ VALID_MAGIC = (b"%PDF", b"PK\x03\x04")
 
 SYSTEM_PROMPT = """You are a Singapore PDPA compliance officer compiling a personal-data inventory from a document.
 
-Go through the document and compile every distinct piece of personal data — data that identifies a living individual, either on its own or combined with other data in the document.
+Go through the document and compile every distinct piece of personal data or sensitive identifier. Include:
+- Anything identifying an individual on its own or combined with other data (names, NRIC/FIN, passport, etc.).
+- Contact details even when they belong to a company or a role rather than a named person (email addresses like billing@company.com, phone numbers, postal addresses).
+- Financial identifiers (bank account numbers, routing numbers, card numbers).
+Business/company data is in scope when it is contact or financial information of the kind above — do not skip a document just because no natural person is named.
 
 Return ONLY valid JSON — no prose, no markdown, no explanation:
 {
