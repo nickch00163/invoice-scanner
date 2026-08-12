@@ -9,11 +9,17 @@ import re
 import tempfile
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from docling.document_converter import DocumentConverter
 import anthropic
 
 app = Flask(__name__)
 CORS(app)
+
+# ponytail: in-memory store — limit is per-process, so run 1 gunicorn worker
+# (or add a Redis storage_uri) if you scale out and need a shared 10/day count.
+limiter = Limiter(get_remote_address, app=app)
 
 _converter = DocumentConverter()
 _client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
@@ -74,7 +80,13 @@ def health():
     return jsonify({"status": "ok"}), 200
 
 
+@app.errorhandler(429)
+def ratelimit_handler(e):
+    return jsonify({"error": "Daily limit reached (10 scans per day). Please try again tomorrow."}), 429
+
+
 @app.route("/analyze", methods=["POST"])
+@limiter.limit("10 per day")
 def analyze():
     if "file" not in request.files:
         return jsonify({"error": "No file provided"}), 400
