@@ -7,6 +7,7 @@ os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
 import json
 import re
 import tempfile
+from datetime import datetime
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from flask_limiter import Limiter
@@ -26,6 +27,7 @@ _client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
 MAX_BYTES = 10 * 1024 * 1024  # 10MB
 VALID_MAGIC = (b"%PDF", b"PK\x03\x04")
+USAGE_LOG = os.path.join(os.path.dirname(__file__), "usage.log")
 
 SYSTEM_PROMPT = """You extract structured data from an invoice or business document into a clean inventory.
 
@@ -82,11 +84,12 @@ def health():
 
 @app.errorhandler(429)
 def ratelimit_handler(e):
-    return jsonify({"error": "Daily limit reached (10 scans per day). Please try again tomorrow."}), 429
+    return jsonify({"error": "Daily scan limit reached. Please try again tomorrow."}), 429
 
 
 @app.route("/analyze", methods=["POST"])
-@limiter.limit("10 per day")
+@limiter.limit("3 per day")                           # per IP
+@limiter.limit("10 per day", key_func=lambda: "global")   # app-wide ceiling, survives IP rotation
 def analyze():
     if "file" not in request.files:
         return jsonify({"error": "No file provided"}), 400
@@ -144,6 +147,12 @@ def analyze():
 
         if not _valid_schema(findings):
             return jsonify({"error": "Analysis returned an unexpected format"}), 500
+
+        try:
+            with open(USAGE_LOG, "a", encoding="utf-8") as fh:
+                fh.write(datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "\n")
+        except OSError:
+            pass  # logging must never break the response
 
         return jsonify(findings)
 
