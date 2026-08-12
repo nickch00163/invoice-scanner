@@ -16,7 +16,10 @@ from docling.document_converter import DocumentConverter
 import anthropic
 
 app = Flask(__name__)
-CORS(app)
+# Lock to your frontend's domain in production: set ALLOWED_ORIGIN=https://yoursite.com
+# (comma-separated for several). Unset = allow all, convenient for local dev.
+_origins = os.environ.get("ALLOWED_ORIGIN")
+CORS(app, origins=_origins.split(",") if _origins else "*")
 
 # ponytail: in-memory store — limit is per-process, so run 1 gunicorn worker
 # (or add a Redis storage_uri) if you scale out and need a shared 10/day count.
@@ -28,6 +31,7 @@ _client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 MAX_BYTES = 10 * 1024 * 1024  # 10MB
 VALID_MAGIC = (b"%PDF", b"PK\x03\x04")
 USAGE_LOG = os.path.join(os.path.dirname(__file__), "usage.log")
+GENERIC_ERROR = "Something went wrong while processing your document. Please try again."
 
 SYSTEM_PROMPT = """You extract structured data from an invoice or business document into a clean inventory.
 
@@ -146,7 +150,8 @@ def analyze():
         findings = json.loads(raw)
 
         if not _valid_schema(findings):
-            return jsonify({"error": "Analysis returned an unexpected format"}), 500
+            app.logger.error("Analysis returned an unexpected format (%d chars)", len(raw))
+            return jsonify({"error": GENERIC_ERROR}), 500
 
         try:
             with open(USAGE_LOG, "a", encoding="utf-8") as fh:
@@ -157,13 +162,17 @@ def analyze():
         return jsonify(findings)
 
     except json.JSONDecodeError:
-        return jsonify({"error": "Failed to parse AI response"}), 500
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        app.logger.exception("Failed to parse AI response")
+        return jsonify({"error": GENERIC_ERROR}), 500
+    except Exception:
+        app.logger.exception("analyze failed")
+        return jsonify({"error": GENERIC_ERROR}), 500
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    # debug is OFF by default — never expose the Werkzeug debugger in production.
+    # Set FLASK_DEBUG=1 locally when you need the interactive traceback.
+    app.run(port=5000, debug=os.environ.get("FLASK_DEBUG") == "1")
